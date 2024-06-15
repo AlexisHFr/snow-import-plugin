@@ -87,7 +87,7 @@ import com.archimatetool.model.util.ArchimateModelUtils;
  *      rewrite popups to be more readable on 4K displays
  *      Can now follow reference links in in properties (with a cache mechanism to reduce the calls to ServiceNow)
  *      Can now use variables ${xxx} in ini properties
- *      Use CIs operational status to determine if Archi elements should be created/updated or removed
+ *      Use CIs install status to determine if Archi elements should be created/updated or removed
  *      Allow to specify the import mode: full, create_only, update_only, create_or_update_only and remove_only
  *      
  * version 1.4: 26/09/2018
@@ -147,8 +147,8 @@ public class MyImporter implements ISelectedModelImporter {
 	String proxyUser = null;
 	String proxyPassword = null;
 
-	final int OPERATIONAL = 1;
-	final int NON_OPERATIONAL = 2;
+	final int INSTALLED = 1;
+	final int RETIRED   = 7;
 
 	HashMap<String, JsonNode> referenceLinkCache = null;
 
@@ -364,7 +364,7 @@ public class MyImporter implements ISelectedModelImporter {
     
     					// We collect all fields that ServiceNow should send us
     					MySortedProperties propertiesToGetFromServiceNow = new MySortedProperties(null);
-    					urlBuilder.append("&sysparm_fields=operational_status");
+    					urlBuilder.append("&sysparm_fields=install_status");
     
     					String archiElementsId = this.iniProperties.getString("archi.elements."+keyword+".id", generalArchiElementsId);
     					serviceNowField = getServiceNowField(archiElementsId);
@@ -439,14 +439,14 @@ public class MyImporter implements ISelectedModelImporter {
     					urlBuilder.append("&sysparm_exclude_reference_link="+String.valueOf(this.mustFollowRefLink));
     
     					// We apply a filter depending of the requested import mode
-    					//     operational_status = 1        if create or update only
-    					//     operational_status = 2        if remove_only
+    					//     install_status = 1        if create or update only
+    					//     install_status = 2        if remove_only
     					//     and no filter                 if create, update and remove
     					StringBuilder sysparmQuery = new StringBuilder();
     					if ( generalArchiElementsImportMode.equals("create_or_update_only") || generalArchiElementsImportMode.equals("create_only") || generalArchiElementsImportMode.equals("update_only") )
-    					    sysparmQuery.append("operational_status="+this.OPERATIONAL);
+    					    sysparmQuery.append("install_status="+this.INSTALLED);
     					else if ( generalArchiElementsImportMode.equals("remove_only") )
-    					    sysparmQuery.append("operational_status="+this.NON_OPERATIONAL);
+    					    sysparmQuery.append("install_status="+this.RETIRED);
     					
     	                String archiElementsFilter = this.iniProperties.getString("archi.elements."+keyword+".filter", generalArchiElementsFilter);
     	                if ( archiElementsFilter.length() != 0 )
@@ -530,14 +530,14 @@ public class MyImporter implements ISelectedModelImporter {
     								throw new MyException("Cannot retrieve element's class in Archi (check properties \"archi.elements.*.archi_class\" and \"archi.elements."+keyword+".archi_class\")");
     							this.logger.debug("   Mapping to Archi class "+requestedArchiClass);
     
-    							int operationalStatus;
-    							if ( getJsonField(jsonNode, "operational_status") == null )
-    								throw new MyException("Cannot retrieve element's operational status (field operational_status in ServiceNow)");
-    							operationalStatus = Integer.valueOf(getJsonField(jsonNode, "operational_status"));
+    							int installStatus;
+    							if ( getJsonField(jsonNode, "install_status") == null )
+    								throw new MyException("Cannot retrieve element's install status (field install_status in ServiceNow)");
+    							installStatus = Integer.valueOf(getJsonField(jsonNode, "install_status"));
     
     							IArchimateElement element = null;
     							try {
-    								element = createOrRemoveArchimateElement(model, requestedArchiClass, archiElementsImportMode, operationalStatus, requestedId);
+    								element = createOrRemoveArchimateElement(model, requestedArchiClass, archiElementsImportMode, installStatus, requestedId);
     							} catch (Exception ex) {
     								@SuppressWarnings("unused")
     								MyPopup popup = new MyPopup(this.logger, Level.FATAL, "Canno't create element of class "+requestedArchiClass, ex);
@@ -739,7 +739,7 @@ public class MyImporter implements ISelectedModelImporter {
     		fieldsToGetFromServiceNow.add("type");
     
     		// we specify the list of ServiceNow fields to retrieve
-    		urlBuilder.append("&sysparm_fields=operational_status");
+    		urlBuilder.append("&sysparm_fields=install_status");
     		for (String field: fieldsToGetFromServiceNow ) {
     			urlBuilder.append(",");
     			urlBuilder.append(field);
@@ -968,12 +968,12 @@ public class MyImporter implements ISelectedModelImporter {
 		this.logger.info("All done ...");
 	}
 
-	private IArchimateElement createOrRemoveArchimateElement(IArchimateModel model, String archiClassName, String importMode, int operationalStatus, String id) throws MyException {
+	private IArchimateElement createOrRemoveArchimateElement(IArchimateModel model, String archiClassName, String importMode, int installStatus, String id) throws MyException {
 		boolean mustCreate = false;
 		boolean mustUpdate = false;
 		boolean mustRemove = false;
 
-		this.logger.trace("      Operational status is " + (operationalStatus == this.OPERATIONAL ? "OPERATIONAL" : "NON OPERATIONAL") );
+		this.logger.trace("      Install status is " + (installStatus == this.INSTALLED ? "INSTALL" : "RETIRED") );
 
 		IArchimateElement element = null;
 		EObject eObject = ArchimateModelUtils.getObjectByID(model, id);
@@ -988,26 +988,26 @@ public class MyImporter implements ISelectedModelImporter {
 
 		switch ( importMode ) {
 			case "create_only":
-				mustCreate = ((operationalStatus == this.OPERATIONAL) && (element == null));
+				mustCreate = ((installStatus == this.INSTALLED) && (element == null));
 				break;
 
 			case "update_only":
-				mustUpdate = ((operationalStatus == this.OPERATIONAL) && (element != null));
+				mustUpdate = ((installStatus == this.INSTALLED) && (element != null));
 				break;
 
 			case "remove_only":
-				mustRemove = ((operationalStatus == this.NON_OPERATIONAL) && (element != null));
+				mustRemove = ((installStatus == this.RETIRED) && (element != null));
 				break;
 
 			case "create_or_update_only":
-				if ( operationalStatus == this.OPERATIONAL ) {
+				if ( installStatus == this.INSTALLED ) {
 					mustCreate = (element == null);
 					mustUpdate = (element != null);
 				}
 				break;
 
 			default: // case "full"
-				if ( operationalStatus == this.OPERATIONAL ) {
+				if ( installStatus == this.INSTALLED ) {
 					// we must either create the element if it does not exist, or update it if it does exist.
 					mustCreate = (element == null);
 					mustUpdate = (element != null);
