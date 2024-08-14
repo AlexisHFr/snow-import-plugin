@@ -42,6 +42,8 @@ import com.archimatetool.model.IArchimateFactory;
 import com.archimatetool.model.IArchimateModel;
 import com.archimatetool.model.IArchimatePackage;
 import com.archimatetool.model.IFolder;
+import com.archimatetool.model.IIdentifier;
+import com.archimatetool.model.IProperties;
 import com.archimatetool.model.IProperty;
 import com.archimatetool.model.IArchimateRelationship;
 import com.archimatetool.model.IDiagramModelArchimateObject;
@@ -531,9 +533,9 @@ public class MyImporter implements ISelectedModelImporter {
     							this.logger.debug("   Mapping to Archi class "+requestedArchiClass);
     
     							int installStatus;
-    							if ( getJsonField(jsonNode, "install_status") == null )
-    								throw new MyException("Cannot retrieve element's install status (field install_status in ServiceNow)");
-    							installStatus = Integer.valueOf(getJsonField(jsonNode, "install_status"));
+    							//if ( getJsonField(jsonNode, "install_status") == null )
+    								//throw new MyException("Cannot retrieve element's install status (field install_status in ServiceNow)");
+    							installStatus = Integer.valueOf(getJsonField(jsonNode, "install_status", "1"));
     
     							IArchimateElement element = null;
     							try {
@@ -976,7 +978,7 @@ public class MyImporter implements ISelectedModelImporter {
 		this.logger.trace("      Install status is " + (installStatus == this.INSTALLED ? "INSTALL" : "RETIRED") );
 
 		IArchimateElement element = null;
-		EObject eObject = ArchimateModelUtils.getObjectByID(model, id);
+		EObject eObject = getObjectBySnowID(model, id);
 
 		if ( eObject != null ) {
 			if ( !(eObject instanceof IArchimateElement) )
@@ -1072,6 +1074,39 @@ public class MyImporter implements ISelectedModelImporter {
 		return element;
 	}
 
+	private EObject getObjectBySnowID(IArchimateModel model, String snowId) {
+		 if(snowId == null || model == null) {
+	            return null;
+	        }
+	        HashMap<String, IArchimateConcept> snowIdPropMap = new HashMap<>();
+	        
+	        // This is an expensive iteration!
+	        for (Iterator<EObject> iter = model.eAllContents(); iter.hasNext();) {
+	            EObject element = iter.next();
+	            if(element instanceof IIdentifier && snowId.equals(((IIdentifier)element).getId())) {
+	                return element;
+	            }
+	            // and another one..
+	            if (element instanceof IArchimateConcept) {
+		            IArchimateConcept concept = (IArchimateConcept) element;
+		            for(IProperty p : concept.getProperties()) {
+		                if(p.getKey().equals("_snowId")) {
+		                    snowIdPropMap.put(p.getValue(), concept);
+		                }
+		            }
+	            }
+	        }
+
+	        // If no obj found, try to find EObject based on _snowId property
+	        IArchimateConcept concept = snowIdPropMap.get(snowId);
+	        if (concept != null) {
+	        	this.logger.info("  Found object by its property _snowId : " + snowId + ", but archi uid differs ("+concept.getId()+") !");
+	        	return concept;
+	        }
+	        
+	        return null;
+	}
+
 	private IArchimateRelationship createOrRemoveArchimateRelation(IArchimateModel model, String archiClassName, String importMode, String id, String sourceId, String targetId) {
 		boolean mustCreate = false;
 		boolean mustUpdate = false;
@@ -1081,7 +1116,7 @@ public class MyImporter implements ISelectedModelImporter {
 		IArchimateConcept source = null;
 		IArchimateConcept target = null;
 
-		EObject eObject = ArchimateModelUtils.getObjectByID(model, id);
+		EObject eObject =getObjectBySnowID(model, id);
 
 		if ( eObject != null ) {
 			if ( !(eObject instanceof IArchimateRelationship) ) {
@@ -1091,14 +1126,14 @@ public class MyImporter implements ISelectedModelImporter {
 			relation = (IArchimateRelationship)eObject;
 		}
 
-		eObject = ArchimateModelUtils.getObjectByID(model, sourceId);
+		eObject = getObjectBySnowID(model, sourceId);
 		if ( (eObject != null) && !(eObject instanceof IArchimateConcept) ) {
 			this.logger.error("Object with ID "+sourceId+" already exists in the model, but it is not an Archimate Concept so it cannot be the source of the connection (it is a "+eObject.getClass().getSimpleName()+").");
 			return null;
 		}
 		source = (IArchimateConcept) eObject;
 
-		eObject = ArchimateModelUtils.getObjectByID(model, targetId);
+		eObject = getObjectBySnowID(model, targetId);
 		if ( (eObject != null) && !(eObject instanceof IArchimateConcept) ) {
 			this.logger.error("TObject with ID "+targetId+" already exists in the model, but it is not an Archimate Concept so it cannot be the source of the connection (it is a "+eObject.getClass().getSimpleName()+").");
 			return null;
